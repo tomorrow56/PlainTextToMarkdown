@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AIによるテキスト → Markdown 変換</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>AIによるテキスト → Markdown 変換</h1>
+        <p>テキストファイルをアップロードし、OpenAI APIキーを入力して、高度なMarkdown変換を体験してください。</p>
+        
+        <div class="api-key-container">
+            <label for="apiKey">OpenAI API Key:</label>
+            <input type="password" id="apiKey" placeholder="ここにAPIキーを入力 (sk-...) ">
+            <a href="https://platform.openai.com/account/api-keys" target="_blank">APIキーの取得方法</a>
+        </div>
+
+        <input type="file" id="fileInput" accept=".txt">
+        <button id="convertBtn" class="btn" disabled>AIで変換する</button>
+        <div id="loader" class="loader" style="display: none;"></div>
+        <p id="progressText" style="display: none;"></p>
+
+        <div class="output-container">
+            <h2>変換結果 (Markdown):</h2>
+            <textarea id="output" readonly placeholder="ここに変換結果が表示されます..."></textarea>
+            <button id="downloadBtn" class="btn" disabled>Markdownをダウンロード</button>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
