@@ -10,7 +10,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let textContent = '';
     let finalConvertedText = '';
 
-    const CHUNK_SIZE = 1500; // characters
+    const CHUNK_SIZE = 3000; // characters
 
     const checkInputs = () => {
         convertBtn.disabled = !(fileInput.files.length > 0 && apiKeyInput.value.trim() !== '');
@@ -41,15 +41,44 @@ document.addEventListener('DOMContentLoaded', () => {
         const chunks = [];
         let currentChunk = "";
 
-        for (const paragraph of paragraphs) {
-            // If the paragraph itself is larger than the max size, it becomes its own chunk.
+        for (let paragraph of paragraphs) {
+            // If the paragraph itself is larger than the max size, split it intelligently by lines
             if (paragraph.length > maxChunkSize) {
-                // If there's a current chunk, push it first.
+                // Flush current chunk if any
                 if (currentChunk.length > 0) {
                     chunks.push(currentChunk.trim());
+                    currentChunk = "";
                 }
-                chunks.push(paragraph); // Push the large paragraph as a standalone chunk
-                currentChunk = ""; // Reset current chunk
+
+                const lines = paragraph.split('\n');
+                let tempChunk = "";
+
+                for (const line of lines) {
+                    // If a single line is too long (rare), split it by char limit
+                    if (line.length > maxChunkSize) {
+                        if (tempChunk.length > 0) {
+                            chunks.push(tempChunk.trim());
+                            tempChunk = "";
+                        }
+                        let remainingLine = line;
+                        while (remainingLine.length > 0) {
+                            chunks.push(remainingLine.substring(0, maxChunkSize));
+                            remainingLine = remainingLine.substring(maxChunkSize);
+                        }
+                        continue;
+                    }
+
+                    if (tempChunk.length + line.length + 1 > maxChunkSize) {
+                        chunks.push(tempChunk.trim());
+                        tempChunk = line;
+                    } else {
+                        tempChunk += (tempChunk ? "\n" : "") + line;
+                    }
+                }
+                
+                if (tempChunk.length > 0) {
+                    currentChunk = tempChunk;
+                }
                 continue;
             }
 
@@ -88,14 +117,21 @@ document.addEventListener('DOMContentLoaded', () => {
                 messages: [
                     {
                         role: 'system',
-                        content: `あなたは、プレーンテキストをMarkdownに変換する専門家です。
-これは大きなドキュメントの一部であるテキストの断片（チャンク）です。このチャンクのテキストだけを、意味や内容を一切変更せず、構造化された読みやすいMarkdown形式に変換してください。導入や結論、要約は絶対に含めないでください。
+                        content: `あなたはプレーンテキストをMarkdownに変換するツールです。
+入力されたテキストを、**一文字たりとも削除・省略せず**に、Markdown記法を用いて見やすく整形してください。
 
-以下のルールに従って、見出しを正確に判定してください：
-1. **大見出し (#)**: 「第X章」や「Chapter X」のような章題や、主要なセクションのタイトル。
-2. **中見出し (##)**: 「X.Y」のような節番号を持つ行や、段落の主題を示す短いフレーズ。
-3. **小見出し (###)**: 箇条書きの親項目や、特定のトピックを簡潔に示すキーワード。
-4. **共通ルール**: 見出しは通常、文末に句点（。）を持ちません。独立した短い行は、見出しである可能性が高いです。`
+### 最重要ルール: 元のテキストを絶対に消さないこと
+- 入力にある文章、見出し、表のデータ、アスキーアート、注釈、箇条書きなど、**すべての要素**を出力に残してください。
+- AIによる要約、抜粋、省略は**厳禁**です。
+- 表や図形を変換する際、その前後にある説明文やタイトルを誤って削除しないように細心の注意を払ってください。
+
+### 整形ルール
+1. **見出し**: 文脈に合わせて #, ##, ### を付与。
+2. **表**: | ヘッダー | 記法でMarkdownテーブルに変換。コードブロックには入れない。
+3. **アスキーアート**: \`\`\`text で囲んで保護。
+4. **リスト**: - や 1. を使って整形。
+
+出力はMarkdownテキストのみを行ってください。`
                     },
                     {
                         role: 'user',
@@ -115,8 +151,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     convertBtn.addEventListener('click', async () => {
-        if (!textContent || !apiKeyInput.value) {
+        if (!fileInput.files.length || !apiKeyInput.value.trim()) {
             alert('APIキーを入力し、ファイルをアップロードしてください。');
+            return;
+        }
+
+        if (!textContent) {
+            alert('ファイルを読み込んでいます。数秒待ってからもう一度ボタンを押してください。');
             return;
         }
 
@@ -135,7 +176,31 @@ document.addEventListener('DOMContentLoaded', () => {
                 processedChunks++;
                 progressText.textContent = `${processedChunks} / ${chunks.length} 個のチャンクを処理中...`;
                 const convertedChunk = await convertChunk(chunk, apiKeyInput.value.trim());
-                finalConvertedText += convertedChunk + '\n\n';
+                
+                // Check if the current final text has an unclosed code block
+                const codeBlockCount = (finalConvertedText.match(/```/g) || []).length;
+                if (codeBlockCount % 2 !== 0) {
+                    // Force close the code block before appending new content
+                    finalConvertedText += '\n```\n';
+                }
+
+                // Merge logic: If the previous chunk ended with a code block and the new one starts with one, merge them.
+                // This fixes split ASCII art or code blocks across chunks.
+                let chunkToAdd = convertedChunk;
+                
+                if (finalConvertedText.trim().endsWith('```') && chunkToAdd.trim().startsWith('```')) {
+                    // Remove the closing ``` from the previous text
+                    finalConvertedText = finalConvertedText.trimEnd().slice(0, -3);
+                    
+                    // Remove the opening ```[lang] from the new chunk
+                    chunkToAdd = chunkToAdd.trimStart().replace(/^```[a-z]*\n?/, '');
+                    
+                    // Add a newline for continuity if needed
+                    finalConvertedText += '\n' + chunkToAdd + '\n\n';
+                } else {
+                    finalConvertedText += chunkToAdd + '\n\n';
+                }
+
                 output.value = finalConvertedText;
                 // Scroll to the bottom of the textarea
                 output.scrollTop = output.scrollHeight;
@@ -144,8 +209,10 @@ document.addEventListener('DOMContentLoaded', () => {
             downloadBtn.disabled = false;
 
         } catch (error) {
-            output.value = `エラーが発生しました: ${error.message}`;
-            progressText.textContent = 'エラーが発生しました。';
+            finalConvertedText += `\n\n=== エラーが発生しました ===\n${error.message}`;
+            output.value = finalConvertedText;
+            output.scrollTop = output.scrollHeight;
+            progressText.textContent = 'エラーにより処理を中断しました。';
         } finally {
             loader.style.display = 'none';
             checkInputs();
